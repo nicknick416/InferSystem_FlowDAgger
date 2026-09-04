@@ -1,0 +1,168 @@
+# ARX5 双臂 NeoVTLA EEF 异步推理配置。
+# 模型动作: 20D = [left xyz + rot6d(columns) + gripper,
+#                  right xyz + rot6d(columns) + gripper]
+
+robot:
+  type: arx5_bimanual
+  name: arx5_bimanual_neovtla
+
+  left_arm:
+    model: X5
+    interface: can0
+    canable_serial: "2070339D5743"
+    # 不要加载 arx1_left_payload.urdf（mass-only +x）。
+    # 该模型把 66g 锁在 link6 +x，笛卡尔跟踪会塌：左手约 1s 内滞后
+    # ~10cm / 0.6rad，触发 max_eef_delta_m=0.10 安全停止。
+    # 默认 X5 URDF 跟踪正常（111937：1841 步）。需要补偿时不要用 mass-x。
+    # urdf_path: Config/RobotModels/arx1_left_payload.urdf
+
+  right_arm:
+    model: X5
+    interface: can1
+    canable_serial: "207B33715743"
+    # urdf_path: Config/RobotModels/arx1_right_payload.urdf
+
+  control:
+    controller_type: cartesian
+    background_send_recv: true
+    frequency_hz: 500
+    controller_dt: 0.002
+    over_current_cnt_max: 1000
+    log_level: INFO
+    enable_gripper: true
+    gripper_command_offset_m: -0.005
+    # Cable grasp uses binary gripper commands. Model widths below 0.060 m
+    # snap closed so contact produces holding force instead of stopping at a
+    # partially-open width; values at/above the threshold snap fully open.
+    gripper_binary: false
+    gripper_binary_threshold: 0.060
+    gripper_binary_close: 0.0
+    # 左右臂关节增益相对 SDK 默认值独立缩放。先保持 1.0；调参时逐级提高。
+    left_joint_kp_scale: 1.40
+    left_joint_kd_scale: 1.15
+    right_joint_kp_scale: 1.0
+    right_joint_kd_scale: 1.0
+    gripper_kp: 4.0
+    gripper_kd: 0.24
+    left_gripper_open_readout: -3.43881
+    right_gripper_open_readout: -3.41974
+    left_gripper_min: 0.0
+    left_gripper_max: 0.085
+    right_gripper_min: 0.0
+    right_gripper_max: 0.085
+    # 双臂交互必须成对执行；精确 IK 失败时沿当前→目标共同缩步。
+    cartesian_ik_atomic: true
+    cartesian_ik_backoff_factors: [0.5, 0.25, 0.125]
+
+  joint_limits:
+    # position_min/max 不在 YAML 覆盖，使用 ARX SDK 的 X5 真实关节限位。
+    velocity_max: [2.0, 2.0, 2.0, 2.0, 2.5, 3.0]
+    acceleration_max: [3.0, 3.0, 3.0, 3.0, 4.0, 4.0]
+    torque_max: [60.0, 60.0, 45.0, 30.0, 20.0, 10.0]
+
+cameras:
+  third_view:
+    type: realsense
+    serial_number: "348522076015"
+    mapped_key: observation/image
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+  left_wrist_view:
+    type: realsense
+    serial_number: "409122273238"
+    mapped_key: observation/left_wrist_image
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+  right_wrist_view:
+    type: realsense
+    serial_number: "260322273712"
+    mapped_key: observation/right_wrist_image
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+image_processing:
+  diff_images:
+    enabled: []
+    alpha: 1.0
+    beta: 0.0
+    direction: positive
+
+inference:
+  # 5556 is occupied by the legacy OpenPI service. FlowDAgger uses an isolated
+  # endpoint so its episode/health protocol cannot be sent to the wrong server.
+  server: "192.168.50.124:5557"
+  recv_timeout_ms: 60000
+  fps: 30
+  jpeg_quality: 90
+  n_execute: 30
+  enabled_cameras: [third_view, left_wrist_view, right_wrist_view]
+
+  action_space: cartesian
+  policy_format: normal
+  arm_dim: 20
+  gripper_index: -1
+  gripper_mode: width
+
+  latency_compensation: true
+  smooth:
+    enabled: true
+    overlap_steps: 8
+  async:
+    enabled: true
+    obs_fps: 30
+    max_latency_steps: 8
+
+  # FlowDAgger 默认先以 shadow 模式部署。完成离线门禁和 5 回合 shadow
+  # 验证后，人工将 shadow_mode 改为 false 才会执行 steering 动作。
+  flowdagger:
+    enabled: true
+    shadow_mode: true
+    run_stage: demonstration
+    expert_fps: 30
+    train_poll_interval_s: 1.0
+    heartbeat_interval_s: 1.0
+    # 50-step horizon at 30 Hz is 1.67s; 1.5s covers GPU jitter without
+    # aborting leftover actions while the next chunk is still in flight.
+    max_chunk_age_s: 1.5
+    teach_kp_scale: 0.0
+    teach_kd_scale: 1.0
+    # Direct hand guidance for both integrated grippers; retain damping only.
+    teach_gripper_kp_scale: 0.0
+    teach_gripper_kd_scale: 1.0
+    left_gripper_open_m: 0.070
+    left_gripper_close_m: 0.0
+    right_gripper_open_m: 0.070
+    right_gripper_close_m: 0.0
+
+  # 推理前的训练起始关节位置（rad）：
+  # [left 6 joints, left gripper, right 6 joints, right gripper]。
+  # 到位并按 Enter 后，模型 action 仍按上面的 Cartesian 20D EEF 处理。
+  inference_home:
+    - 0.0
+    - 0.948
+    - 0.858
+    - -0.573
+    - 0.0
+    - 0.0
+    - 0.070  # 左夹爪实测安全张开位置；0.082 会顶住机械限位并触发过流
+    - 0.0
+    - 0.948
+    - 0.858
+    - -0.573
+    - 0.0
+    - 0.0
+    - 0.070  # 右夹爪避免顶住张开机械限位并触发扭矩保护
+
+  max_eef_delta_m: 0.10
+  max_eef_rotation_delta_rad: 0.8
+  # 每个 30Hz 发布周期限制 EEF 目标步长，降低边界附近 IK 跳出可行域的概率。
+  # FlowDAgger 策略发布周期的 EEF 平移上限。
+  max_eef_xyz_step: 0.005
+  max_eef_rot_step_deg: 2.0
+  max_joint_delta_rad: 0.5
+  max_joint_velocity_rad_s: 1.2

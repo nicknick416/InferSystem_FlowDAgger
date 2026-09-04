@@ -1,0 +1,18 @@
+# InferSystem 公共依赖
+# pip install -r requirements.txt
+#
+# 环境: conda create -n infer python=3.10
+#
+# 根据机械臂类型选择安装:
+#   ARX5:  pip install arx5-interface
+#   Flexiv (非夕): pip install flexivrdk==1.9.0
+#   UR：pip install ur-rtde
+#   Piper: pip install python-can==4.6.1 piper_sdk==0.6.1
+
+pyyaml
+pydantic>=2.0
+numpy
+opencv-python
+pyzmq
+msgpack
+pyrealsense2

@@ -1,0 +1,203 @@
+# ============================================================
+# fake_config.yaml
+#
+# 这是一个“可解析”的完整假配置模板，用来对齐训练配置、模型输入输出和
+# 推理运行时参数。真实运行前需要替换序列号、IP、CAN 口、相机 ID 和设备路径。
+# ============================================================
+
+robot:
+  # 当前支持的机械臂类型: flexiv, arx5, arx5_bimanual, aloha, ur。
+  # 一个有效 YAML 里只能启用一个 robot 配置块；这里默认用 Flexiv 单臂示例。
+  type: flexiv
+  name: fake_flexiv_arm
+  serial_number: "Rizon4-000000"
+  network_interface_whitelist: []  # 空列表表示交给 Flexiv RDK 自动选择网卡。
+  verbose: true
+  lite: false
+
+  gripper:
+    name: "Fake-Flexiv-Gripper"
+    max_width: 0.10          # 单位 m；width 模式会按该值裁剪夹爪目标宽度。
+    min_width: 0.0
+    max_velocity: 0.2
+    max_force: 30.0
+    default_velocity: 0.1
+    default_force: 20.0
+
+  control:
+    # joint_position 通常使用 NRT_JOINT_POSITION。
+    # cartesian 通常使用 NRT_CARTESIAN_MOTION_FORCE。
+    default_mode: NRT_JOINT_POSITION
+    frequency_hz: 1000.0
+    home_position_deg: [0, -20, 0, 90, 0, 20, 0]
+    home_velocity_scale: 30
+
+  # 关节限位可选但建议配置；必须放在 robot.joint_limits 下，不要放到 control 下。
+  joint_limits:
+    position_min_deg: [-160, -130, -170, -107, -170, -80, -170]
+    position_max_deg: [160, 130, 170, 154, 170, 260, 170]
+    velocity_max: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+    acceleration_max: [3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+    torque_max: [100, 100, 50, 50, 20, 20, 20]
+
+cameras:
+  # YAML 的 key 是本地相机名，SensorManager 读取时使用它。
+  # mapped_key 是真正发送给推理 server 的图像 key，用来匹配 OpenPI/LeRobot
+  # 等训练配置里的特征名，例如 observation/image。
+  third_view:
+    type: realsense
+    serial_number: "000000000001"
+    mapped_key: "observation/image"
+    calibration_role: eye_to_hand  # 可选: eye_to_hand, eye_in_hand, null。
+    enable_depth: false
+    align_depth_to_color: true
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+    params:
+      exposure.auto: false
+      exposure.value: 4000
+      gain: 32
+      white_balance.auto: false
+      white_balance.value: 4600
+
+  wrist_view:
+    type: realsense
+    serial_number: "000000000002"
+    mapped_key: "observation/wrist_image"
+    calibration_role: eye_in_hand
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+  secondary_view:
+    type: realsense
+    serial_number: "000000000003"
+    mapped_key: "observation/secondary_image"
+    calibration_role: null
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+tactile:
+  # 可选触觉/视频设备。真机上建议使用稳定的 /dev/v4l/by-path 路径。
+  wrist_tactile_left:
+    type: opencv
+    device_path: "/dev/v4l/by-path/fake-left-video-index0"
+    # 触觉视频也可以映射到训练时使用的 obs key。
+    mapped_key: "observation/tactile_image"
+    width: 640
+    height: 480
+    fps: 30
+
+inference:
+  # ZMQ 推理服务器地址；server 返回 action chunk。
+  server: "127.0.0.1:5555"
+  recv_timeout_ms: 30000
+  jpeg_quality: 90
+
+  # 控制主循环频率，以及每个 action chunk 最多执行多少帧。
+  fps: 30
+  n_execute: 40
+
+  # 这里只写本地图像传感器名，可引用 cameras 和 tactile；实际下发 obs 时会映射为 mapped_key。
+  enabled_cameras: [third_view, wrist_view, secondary_view, wrist_tactile_left]
+
+  # 支持 joint_position 和 cartesian。
+  # joint_position 的 state/action:
+  #   单臂 + 外部夹爪: [j0..j6, gripper]
+  #   ARX5/Aloha 双臂: [Lj0..Lj5,Lg,Rj0..Rj5,Rg]
+  # cartesian 的 state/action:
+  #   单臂: [x,y,z,R00,R10,R20,R01,R11,R21,gripper]
+  #   双臂: [left_10_values, right_10_values]
+  action_space: joint_position
+
+  # normal: state/action 使用当前有效维度。
+  # canonical: 仅支持 cartesian；state 补 0 到 32 维，server 返回 action 必须是 32 维。
+  #   单臂只使用前 10 维，双臂只使用前 20 维。
+  policy_format: normal
+  canonical_dim: 32
+
+  # arm_dim 是发送给 robot.act() 的手臂维度。
+  # Flexiv joint + 外部夹爪: 模型 action 为 8 维，arm_dim=7，gripper_index=7。
+  # ARX5/Aloha 内置夹爪: arm_dim=7 或 14，gripper_index=-1。
+  arm_dim: 7
+  gripper_index: 7
+
+  # binary: 按 gripper_threshold 判断开合。
+  # width: 将 gripper action 直接当作真实夹爪宽度，单位 m。
+  gripper_mode: binary
+  gripper_threshold: 0.5
+
+  # 推理开始前先移动到的起始关节角，单位 rad；通常应和训练初始状态一致。
+  inference_home: [0.0, -0.349066, 0.0, 1.570796, 0.0, 0.349066, 0.0]
+
+  # 同步推理时，按推理耗时跳过已经过期的 action 前缀。
+  latency_compensation: true
+
+  # Temporal smoothing 用于融合新旧 action chunk 的重叠区，减少接缝跳变。
+  # 当前异步推理路径也会把返回的 chunk 送入同一个 smoother。
+  smooth:
+    enabled: true
+    overlap_steps: 8
+
+  # 异步推理: 后台按 obs_fps 发送 obs，主线程按 inference.fps 下发 action。
+  # obs_fps: null 表示使用 inference.fps。
+  async:
+    enabled: false
+    obs_fps: null
+    max_latency_steps: 8
+
+  # 安全阈值。chunk/action 和当前状态偏差过大时会拒绝执行。
+  max_joint_delta_rad: 0.5
+  max_eef_delta_m: 0.10
+  max_eef_rotation_delta_rad: 0.8
+  max_joint_velocity_rad_s: 1.2  # 设为 null 可关闭 joint velocity 裁剪。
+
+  # 推理过程视频录制参数，由 Example/robot_inference.py 使用。
+  video_codec: libx264
+  video_crf: 28
+  video_preset: veryfast
+
+logging:
+  console_level: INFO
+  file_level: DEBUG
+
+# ============================================================
+# 机械臂替换提示
+# ============================================================
+#
+# ARX5 单臂:
+#   robot.type: arx5
+#   robot.interface: can0
+#   robot.dof: 6
+#   robot.control.enable_gripper: true
+#   inference.arm_dim: 7
+#   inference.gripper_index: -1
+#
+# ARX5 双臂:
+#   robot.type: arx5_bimanual
+#   robot.left_arm.interface: can0
+#   robot.right_arm.interface: can1
+#   inference.arm_dim: 14
+#   inference.gripper_index: -1
+#
+# Aloha / Piper 双臂:
+#   robot.type: aloha
+#   robot.can_interface_left: can0
+#   robot.can_interface_right: can1
+#   robot.gripper_max_m: 0.07
+#   inference.arm_dim: 14
+#   inference.gripper_index: -1
+#
+# UR + Robotiq:
+#   robot.type: ur
+#   robot.robot_ip: "192.168.0.10"
+#   robot.dof: 6
+#   robot.gripper.enabled: true
+#   inference.arm_dim: 6
+#   inference.gripper_index: 6
+#
+# Cartesian 模式:
+#   inference.action_space: cartesian
+#   单臂模型 action 维度为 10: [xyz, rot6d, gripper]
+#   双臂模型 action 维度为 20: [left xyz+rot6d+g, right xyz+rot6d+g]

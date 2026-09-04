@@ -1,0 +1,162 @@
+# ============================================================
+# Aloha DJ lab_black EEF — fold_towels VTLA (b2 latent tactile) 推理配置
+# 说明：本配置用于 /home/ubuntu/InferSystem/Example/robot_inference.py
+#
+# 由 aloha_dj_kai0_lab_black_eef_fold_towels_from_box.yaml (pi 推理，已验证的
+# 机器人/相机/夹爪硬件配置) 改造而来，改动仅四处：
+#   1) server 指向 fold_towels VTLA server (192.168.50.148:5555)
+#   2) policy_format: normal -> canonical  (VTLA server 收发 32 维 canonical)
+#   3) 新增 tactile 段 (b2 需要 4 路触觉)
+#   4) enabled_cameras 增加 4 路触觉
+# 机器人本体 / 夹爪标定 / RGB 相机序列号保持与 pi 配置完全一致。
+# ============================================================
+
+robot:
+  type: aloha
+  name: aloha
+  can_interface_left: can_left_slave   # 左臂从动臂(follower/puppet) CAN 口
+  can_interface_right: can_right_slave  # 右臂从动臂(follower/puppet) CAN 口
+  speed_percent: 100
+  enable_timeout: 5.0
+
+  # 夹爪标定与 pi fold_towels 配置一致（同一台机器人本体）。
+  gripper_max_m: 0.0994
+  gripper_min_left_m: 0.0099
+  gripper_max_left_m: 0.0994
+  gripper_min_right_m: 0.0095
+  gripper_max_right_m: 0.0992
+  home_gripper_left_m: 0.0994
+  home_gripper_right_m: 0.0992
+  gripper_sdk_scale: 1000000.0
+  gripper_sdk_max: 80000
+  gripper_write_scale_left: 1.0
+  gripper_write_scale_right: 1.0
+  gripper_sdk_max_left: 100000
+  gripper_sdk_max_right: 100000
+  gripper_effort_left: 1000
+  gripper_effort_right: 5000
+  gripper_read_scale_left: 1.0
+  gripper_read_scale_right: 1.0
+  control:
+    frequency_hz: 30.0
+
+# ── RGB cameras (与 pi fold_towels 配置一致的序列号) ─────────────
+cameras:
+  observation.image.hand_left:
+    type: realsense
+    serial_number: "342222072244"
+    mapped_key: observation/left_wrist_image
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+  observation.image.hand_right:
+    type: realsense
+    serial_number: "349522072879"
+    mapped_key: observation/right_wrist_image
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+  observation.image.top_head:
+    type: realsense
+    serial_number: "254322074518"
+    mapped_key: observation/image
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+# ── Tactile cameras (b2 latent 触觉) ─────────────────────────
+# 4 个触觉相机同型号、共用同一 USB serial (CN4700KU0001NP1110)，只能按
+# USB 口 (by-path) 区分。以下映射取自当前正在采集数据的采集系统的权威配置：
+#   DataCollectionSystem_HIL_Infersystem_smooth_test/collector/data/camera_config.json
+#   (采集进程确认在跑 --config aloha_4can_config.yaml，故此映射即当前正确映射)
+# mapped_key 对应 server CAMERA_MAP: tactile_ll/lr/rl/rr。
+tactile:
+  left_wrist_left_tactile:      # ll
+    type: opencv
+    device_path: "/dev/v4l/by-path/pci-0000:04:00.0-usb-0:2:1.0-video-index0"
+    mapped_key: observation/tactile_ll
+    width: 640
+    height: 480
+    fps: 30
+  left_wrist_right_tactile:     # lr
+    type: opencv
+    device_path: "/dev/v4l/by-path/pci-0000:03:00.0-usb-0:2:1.0-video-index0"
+    mapped_key: observation/tactile_lr
+    width: 640
+    height: 480
+    fps: 30
+  right_wrist_left_tactile:     # rl
+    type: opencv
+    device_path: "/dev/v4l/by-path/pci-0000:12:00.3-usb-0:1:1.0-video-index0"
+    mapped_key: observation/tactile_rl
+    width: 640
+    height: 480
+    fps: 30
+  right_wrist_right_tactile:    # rr
+    type: opencv
+    device_path: "/dev/v4l/by-path/pci-0000:08:00.0-usb-0:2:1.0-video-index0"
+    mapped_key: observation/tactile_rr
+    width: 640
+    height: 480
+    fps: 30
+
+# ── Inference ────────────────────────────────────────────────
+inference:
+  server: "192.168.50.148:5555"   # fold_towels VTLA server (patched: 支持 CHW uint8)
+  fps: 30
+  n_execute: 50                    # < action_horizon(60)，给 smoothing/async 留重叠余量
+  jpeg_quality: 80
+  recv_timeout_ms: 60000           # VTLA 首帧推理较慢(~1.7s)，放宽超时
+  go_home_on_exit: true
+  go_home_exit_speed_percent: 20
+  action_space: cartesian
+  arm_dof: 20                      # 双臂 EEF10+EEF10
+  gripper_action_index: -1         # 夹爪内嵌在 action 中
+  gripper_mode: raw                # 与 pi fold_towels 一致（右爪负方向需 raw）
+  # ★ VTLA 关键改动：canonical 32 维（state 补零到 32；action 取前 20 维还原）
+  policy_format: canonical
+  canonical_dim: 32
+  # 训练数据转换器对所有相机是直接拉伸到224(非letterbox)，部署必须一致
+  image_resize_mode: stretch
+  # prompt 留空 -> 用 server 端 default_prompt（训练时的叠毛巾指令，精确匹配）
+  max_eef_delta_m: 2.5
+  max_eef_rotation_delta_rad: 2.5
+  max_eef_xyz_step: 0.5
+  max_eef_rot_step_deg: 10.0
+  max_eef_gripper_step: 0.1
+  smooth:
+    enabled: true
+    overlap_steps: 8
+  async_inference:
+    enabled: true
+    obs_fps: 30
+    max_latency_steps: 8
+  # inference_home: [左臂6关节, 左夹爪, 右臂6关节, 右夹爪]
+  inference_home: [0.0, 0.32, -0.36, 0.0, 0.24, 0.0, 0.0994, 0.0, 0.32, -0.36, 0.0, 0.24, 0.0, 0.0992]
+  enabled_cameras:
+    - observation.image.top_head
+    - observation.image.hand_left
+    - observation.image.hand_right
+    - left_wrist_left_tactile
+    - left_wrist_right_tactile
+    - right_wrist_left_tactile
+    - right_wrist_right_tactile
+
+# ============================================================
+# 上面的触觉映射已取自实时采集系统的权威配置，正常无需再核对。
+# 若 USB 口之后又被插拔变动，可用以下方法重新核对：
+#   分别只按压某一根手指的触觉垫，同时用下面命令逐个查看 4 个口的画面，
+#   看哪个口的图像在变化，即可确定该口对应哪根手指：
+#     python - <<'PY'
+#     import cv2
+#     cap = cv2.VideoCapture("/dev/v4l/by-path/pci-0000:04:00.0-usb-0:2:1.0-video-index0")
+#     while True:
+#         ok, f = cap.read()
+#         if ok: cv2.imshow("tac", f);
+#         if cv2.waitKey(1) == 27: break
+#     PY
+#   （或直接用 Example/aloha/AlohaDataCollection/find_seven_camera_nodes.py 辅助）
+#   核对后把 4 个 device_path 调整到正确的 ll/lr/rl/rr 即可。
+# ============================================================

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+videos/
+Logs/
+*.jsonl
+.codex_backups/
+.claude/
+infer_system.egg-info/
+.vscode/
+tests/*
+!tests/test_arx5_bimanual_ik.py
+!tests/test_arx5_payload_calibration.py
+!tests/test_arx5_eef_replay.py

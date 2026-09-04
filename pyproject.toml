@@ -1,0 +1,25 @@
+[project]
+name = "infer-system"
+version = "0.1.0"
+description = "Scaffold for multi-robot inference and control."
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml",
+    "numpy",
+    "opencv-python",
+    "pyzmq",
+    "msgpack",
+    "pyrealsense2",
+]
+
+[project.optional-dependencies]
+arx5 = ["arx5-interface"]
+flexiv = ["flexivrdk"]
+ur = ["ur-rtde"]
+piper = ["piper_sdk==0.6.1", "python-can==4.6.1"]
+
+[tool.setuptools.packages.find]
+include = ["Core*", "Robot*", "Config*", "Sensor*", "Inference*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

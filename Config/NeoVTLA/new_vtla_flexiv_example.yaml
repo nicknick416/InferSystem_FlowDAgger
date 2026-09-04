@@ -1,0 +1,126 @@
+# Reference-style NeoVTLA ZMQ example for Flexiv.
+#
+# Pair this robot-side config with:
+#
+#   python new_vtla_zmq_server.py \
+#     --addr tcp://*:5556 \
+#     --config flexiv_pick_up_fruits_control \
+#     --checkpoint /path/to/checkpoint \
+#     --default-prompt "do the task"
+#
+# For tactile-prior configs, add the tactile sensor names to
+# inference.enabled_cameras so the client sends observation/left_tactile and
+# observation/right_tactile.
+
+robot:
+  type: flexiv
+  name: flexiv_arm
+  serial_number: "Rizon4-063422"
+  network_interface_whitelist: []
+  verbose: true
+  lite: false
+
+  gripper:
+    name: "Flexiv-GN01"
+    max_width: 0.10
+    min_width: 0.0
+    max_velocity: 0.2
+    max_force: 80.0
+    default_velocity: 0.2
+    default_force: 15.0
+
+  control:
+    default_mode: NRT_CARTESIAN_MOTION_FORCE
+    frequency_hz: 1000.0
+    home_position_deg: [0, -20, 0, 90, 0, 20, 0]
+    home_velocity_scale: 30
+
+cameras:
+  third_view:
+    type: realsense
+    serial_number: "346522070312"
+    mapped_key: observation/image
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+  left_wrist_view:
+    type: realsense
+    serial_number: "352122272452"
+    mapped_key: observation/wrist_image
+    enable_depth: false
+    streams:
+      color: {width: 640, height: 480, fps: 30, encoding: bgr8}
+
+tactile:
+  left_wrist_left_tactile:
+    type: opencv
+    device_path: "/dev/v4l/by-path/pci-0000:13:00.0-usb-0:2:1.0-video-index0"
+    mapped_key: observation/left_tactile
+    width: 640
+    height: 480
+    fps: 30
+
+  left_wrist_right_tactile:
+    type: opencv
+    device_path: "/dev/v4l/by-path/pci-0000:30:00.3-usb-0:2:1.0-video-index0"
+    mapped_key: observation/right_tactile
+    width: 640
+    height: 480
+    fps: 30
+
+inference:
+  server: "192.168.50.148:5556"
+  recv_timeout_ms: 30000
+  fps: 30
+  n_execute: 50
+
+  # Send PNG bytes. new_vtla_zmq_server.py decodes and squashes to 224x224.
+  image_encoding: encoded_png
+  jpeg_quality: 90
+
+  enabled_cameras:
+    - third_view
+    - left_wrist_view
+    # Enable these two only for tactile-prior checkpoints:
+    - left_wrist_left_tactile
+    - left_wrist_right_tactile
+
+  action_space: cartesian
+  policy_format: canonical
+  canonical_dim: 32
+  arm_dim: 7
+  gripper_index: 7
+  gripper_mode: width
+  gripper_threshold: 0.5
+  # 仅控制推理 action；初始化、回 Home/复位仍会等待夹爪动作完成。
+  gripper_wait_during_inference: false
+    # true: 初始化 Grasp 后，推理期间忽略模型夹爪指令，持续夹住板卡。
+  hold_gripper_closed_during_inference: false
+  # true: Ctrl+C/推理结束时，确认回 Home 完成后再打开夹爪。
+  open_gripper_on_inference_end: false
+
+  # 推理开始前移动到的训练起始关节角，单位 rad。
+  # 对应 deg: [0, -20, 0, 90, 0, 20, 0]
+  # inference_home: [0.0, -0.349066, 0.0, 1.570796, 0.0, 0.349066, 0.0]
+  inference_home: [-0.030182, -0.472747, 0.037855, 1.381905, -0.017523, 0.229231, 0.008156]  # 从抓住板卡开始的插板卡
+  # 到达 inference_home 后控制夹爪，单位 m；0.0 使用 Grasp(default_force)，正值使用 Move(width)。
+  inference_home_gripper_width: 0.10
+
+  # Reference serve expects the client to execute the full returned horizon.
+  latency_compensation: true
+  smooth:
+    enabled: true
+    overlap_steps: 15
+  async:
+    enabled: true
+    obs_fps: 30
+    max_latency_steps: 8
+
+  max_eef_delta_m: 0.3
+  max_eef_rotation_delta_rad: 0.8
+  max_joint_delta_rad: 0.5
+  max_joint_velocity_rad_s: 1.2
+  max_eef_xyz_step: 0.0
+  max_eef_rot_step_deg: 0.0
+  max_eef_gripper_step: 0.0
